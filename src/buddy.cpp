@@ -1,5 +1,6 @@
 #include "buddy.h"
 #include "buddy_common.h"
+#include "layout.h"
 #include <M5StickCPlus.h>
 #include <string.h>
 
@@ -38,6 +39,9 @@ static TFT_eSPI *_tgt = &spr;
 // art is space-padded to a fixed width for alignment at 1×; at 2× we trim
 // and re-center per line so the padding doesn't push ink off-screen.
 static uint8_t _scale = 1;
+// Extra pixel shift applied to all buddy Y coords to vertically center the
+// sprite inside its zone. Set in buddyInit() for S3's 320×320 buddy zone.
+static int _yShift = 0;
 
 void buddyPrintLine(const char *line, int yPx, uint16_t color, int xOff) {
   int len = strlen(line);
@@ -60,7 +64,7 @@ void buddyPrintLine(const char *line, int yPx, uint16_t color, int xOff) {
 void buddyPrintSprite(const char *const *lines, uint8_t nLines, int yOffset,
                       uint16_t color, int xOff) {
   _tgt->setTextSize(_scale);
-  int yBase = BUDDY_Y_BASE * _scale - (_scale - 1) * 14;
+  int yBase = BUDDY_Y_BASE * _scale - (_scale - 1) * 14 + _yShift;
   for (uint8_t i = 0; i < nLines; i++) {
     buddyPrintLine(lines[i], yBase + (yOffset + i * BUDDY_CHAR_H) * _scale,
                    color, xOff);
@@ -70,7 +74,8 @@ void buddyPrintSprite(const char *const *lines, uint8_t nLines, int yOffset,
 // Species pass 1× coords (relative to BUDDY_X_CENTER / BUDDY_Y_OVERLAY);
 // transform here so all 18 species files stay scale-agnostic.
 void buddySetCursor(int x, int y) {
-  _tgt->setCursor(BUDDY_X_CENTER + (x - BUDDY_X_CENTER) * _scale, y * _scale);
+  _tgt->setCursor(BUDDY_X_CENTER + (x - BUDDY_X_CENTER) * _scale,
+                  y * _scale + _yShift);
 }
 void buddySetColor(uint16_t fg) { _tgt->setTextColor(fg, BUDDY_BG); }
 void buddyPrint(const char *s) {
@@ -119,10 +124,16 @@ static const uint32_t TICK_MS = 200;
 void buddyInit() {
   tickCount = 0;
   nextTickAt = 0;
+#ifdef ESP32_S3_LCD_316
+  BUDDY_X_CENTER = BUDDY_ZONE_W / 2;  // 160: center of left 320×320 zone
+  BUDDY_CANVAS_W = BUDDY_ZONE_W;       // only clear the left zone
+  _scale = 2;
+  _yShift = 80;  // push body+particles down to center in 320×320 zone
+#else
   BUDDY_X_CENTER = W / 2;
   BUDDY_CANVAS_W = W;
-  currentSpeciesIdx = 4; // Force default to Cat (index 4)
-  speciesIdxSave(currentSpeciesIdx);
+#endif
+  currentSpeciesIdx = 4; // fallback if GIF unavailable
 }
 
 void buddySetSpeciesIdx(uint8_t idx) {
@@ -210,9 +221,12 @@ void buddyTick(uint8_t personaState) {
   lastDrawnState = personaState;
   lastDrawnSpecies = currentSpeciesIdx;
 
-  // Clear the whole render strip — at 2× the body reaches y≈126, at 1× ≈82.
+#ifdef ESP32_S3_LCD_316
+  spr.fillRect(0, 0, BUDDY_CANVAS_W, H, BUDDY_BG);  // clear full 320×320 zone
+#else
   spr.fillRect(0, 0, BUDDY_CANVAS_W,
                (BUDDY_Y_BASE + 5 * BUDDY_CHAR_H + 12) * _scale, BUDDY_BG);
+#endif
 
   const Species *sp = SPECIES_TABLE[currentSpeciesIdx];
   if (sp->states[personaState])

@@ -1,5 +1,6 @@
 #include "character.h"
 #include "buddy_common.h"
+#include "layout.h"
 #include <M5StickCPlus.h>
 #include <LittleFS.h>
 #include <AnimatedGIF.h>
@@ -52,8 +53,14 @@ static TFT_eSPI*   _tgt = &spr;
 static void gifPlace() {
   int outW = peekMode ? gifW / 2 : gifW;
   int outH = peekMode ? gifH / 2 : gifH;
+#ifdef ESP32_S3_LCD_316
+  // Landscape: GIF always centered in the left 320×320 buddy zone
+  gifX = (BUDDY_ZONE_W - outW) / 2;
+  gifY = (H - outH) / 2;
+#else
   gifX = (spr.width() - outW) / 2;
   gifY = peekMode ? (PEEK_TOP - outH) / 2 : (HOME_ZONE - outH) / 2;
+#endif
 }
 static uint32_t    nextFrameAt = 0;
 static uint32_t    animPauseUntil = 0;
@@ -112,9 +119,18 @@ static void gifDrawCb(GIFDRAW* d) {
   // The -O2/-O3 sub-rect + delta-transparency path was tried and reverted:
   // disposal semantics are encoder-dependent and don't compose with the
   // 2:1 peek downscale's sample alignment.
+#ifdef ESP32_S3_LCD_316
+  // RGB panel reads the sprite buffer big-endian; drawPixel stores native
+  // little-endian. Byte-swap every pixel so colors match the sw() convention.
+  auto put = [&](int x, int y, uint8_t idx) {
+    uint16_t c = (hasT && idx == t) ? pal.bg : pal16[idx];
+    _tgt->drawPixel(x, y, (c >> 8) | (c << 8));
+  };
+#else
   auto put = [&](int x, int y, uint8_t idx) {
     _tgt->drawPixel(x, y, (hasT && idx == t) ? pal.bg : pal16[idx]);
   };
+#endif
 
   if (peekMode) {
     if (srcY & 1) return;

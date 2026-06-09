@@ -5,6 +5,7 @@
 #include "ble_bridge.h"
 #include "data.h"
 #include "buddy.h"
+#include "layout.h"
 #ifdef ESP32_S3_LCD_316
 #include "panel_rgb.h"
 #endif
@@ -26,7 +27,7 @@ static void startBt() {
 #include "stats.h"
 #include "buddy_common.h"
 #ifdef ESP32_S3_LCD_316
-int W = 320, H = 820;
+int W = 820, H = 320;
 #elif defined(ESP32_C6_LCD)
 int W = 172, H = 320;
 #else
@@ -54,6 +55,16 @@ static inline int getSafeX(int y) {
 // Colors used across multiple UI surfaces
 const uint16_t HOT   = 0xFA20;   // red-orange: warnings, impatience, deny
 const uint16_t PANEL = 0x2104;   // overlay panel background
+
+#ifdef ESP32_S3_LCD_316
+// fillRect/setTextColor store raw values; esp_lcd draw_bitmap byte-swaps each pixel.
+// drawFastHLine/drawPixel pre-swap internally so they display the raw color correctly.
+// For fillRect/setTextColor paths, pre-swap with sw() so double-swap → correct display.
+static inline uint16_t sw(uint16_t c) { return (c >> 8) | (c << 8); }
+static inline uint16_t dcol(uint16_t c) { return (c >> 8) | (c << 8); }
+#else
+static inline uint16_t dcol(uint16_t c) { return c; }
+#endif
 
 enum PersonaState { P_SLEEP, P_IDLE, P_BUSY, P_ATTENTION, P_CELEBRATE, P_DIZZY, P_HEART };
 const char* stateNames[] = { "sleep", "idle", "busy", "attention", "celebrate", "dizzy", "heart" };
@@ -152,15 +163,14 @@ const uint8_t INFO_PG_BUTTONS = 1;
 const uint8_t INFO_PG_CREDITS = 5;
 
 void applyDisplayMode() {
+#ifndef ESP32_S3_LCD_316
+  // Landscape layout has a dedicated buddy zone — no peek compression needed.
   bool peek = displayMode != DISP_NORMAL;
   characterSetPeek(peek);
   buddySetPeek(peek);
-  // Clear the whole sprite on mode switch. drawInfo/drawPet clear their
-  // own regions when they run, but when you switch FROM info/pet TO normal,
-  // those functions stop running and their stale pixels stay behind. Full
-  // clear is cheap and guarantees no leftovers between modes.
+#endif
   spr.fillSprite(0x0000);
-  characterInvalidate();  // redraws character on next tick (text mode path)
+  characterInvalidate();
 }
 
 const char* menuItems[] = { "settings", "turn off", "help", "about", "demo", "close" };
@@ -265,39 +275,38 @@ const int MENU_HINT_H = 14;
 static void drawMenuHints(const Palette& p, int mx, int mw, int hy,
                           const char* downLbl = "A", const char* rightLbl = "B") {
   spr.drawFastHLine(mx + 6, hy - 4, mw - 12, p.textDim);
-  spr.setTextColor(p.textDim, PANEL);
-  // 6px/glyph at size 1; triangle goes 4px after the label ends
+  spr.setTextColor(dcol(p.textDim), dcol(PANEL));
   int x = mx + 8;
   spr.setCursor(x, hy); spr.print(downLbl);
   x += strlen(downLbl) * 6 + 4;
-  spr.fillTriangle(x, hy + 1, x + 6, hy + 1, x + 3, hy + 6, p.textDim);
+  spr.fillTriangle(x, hy + 1, x + 6, hy + 1, x + 3, hy + 6, dcol(p.textDim));
   x = mx + mw / 2 + 4;
   spr.setCursor(x, hy); spr.print(rightLbl);
   x += strlen(rightLbl) * 6 + 4;
-  spr.fillTriangle(x, hy, x, hy + 6, x + 5, hy + 3, p.textDim);
+  spr.fillTriangle(x, hy, x, hy + 6, x + 5, hy + 3, dcol(p.textDim));
 }
 
 static void drawSettings() {
   const Palette& p = characterPalette();
   int mw = 118, mh = 16 + SETTINGS_N * 14 + MENU_HINT_H;
   int mx = (W - mw) / 2, my = (H - mh) / 2;
-  spr.fillRoundRect(mx, my, mw, mh, 4, PANEL);
+  spr.fillRoundRect(mx, my, mw, mh, 4, dcol(PANEL));
   spr.drawRoundRect(mx, my, mw, mh, 4, p.textDim);
   spr.setTextSize(1);
   Settings& s = settings();
   bool vals[] = { s.sound, s.bt, s.wifi, s.led, s.hud };
   for (int i = 0; i < SETTINGS_N; i++) {
     bool sel = (i == settingsSel);
-    spr.setTextColor(sel ? p.text : p.textDim, PANEL);
+    spr.setTextColor(dcol(sel ? p.text : p.textDim), dcol(PANEL));
     spr.setCursor(mx + 6, my + 8 + i * 14);
     spr.print(sel ? "> " : "  ");
     spr.print(settingsItems[i]);
     spr.setCursor(mx + mw - 36, my + 8 + i * 14);
-    spr.setTextColor(p.textDim, PANEL);
+    spr.setTextColor(dcol(p.textDim), dcol(PANEL));
     if (i == 0) {
       spr.printf("%u/4", brightLevel);
     } else if (i >= 1 && i <= 5) {
-      spr.setTextColor(vals[i-1] ? GREEN : p.textDim, PANEL);
+      spr.setTextColor(dcol(vals[i-1] ? GREEN : p.textDim), dcol(PANEL));
       spr.print(vals[i-1] ? " on" : "off");
     } else if (i == 6) {
       static const char* const RN[] = { "auto", "port", "land" };
@@ -315,17 +324,17 @@ static void drawReset() {
   const Palette& p = characterPalette();
   int mw = 118, mh = 16 + RESET_N * 14 + MENU_HINT_H;
   int mx = (W - mw) / 2, my = (H - mh) / 2;
-  spr.fillRoundRect(mx, my, mw, mh, 4, PANEL);
+  spr.fillRoundRect(mx, my, mw, mh, 4, dcol(PANEL));
   spr.drawRoundRect(mx, my, mw, mh, 4, HOT);
   spr.setTextSize(1);
   for (int i = 0; i < RESET_N; i++) {
     bool sel = (i == resetSel);
-    spr.setTextColor(sel ? p.text : p.textDim, PANEL);
+    spr.setTextColor(dcol(sel ? p.text : p.textDim), dcol(PANEL));
     spr.setCursor(mx + 6, my + 8 + i * 14);
     spr.print(sel ? "> " : "  ");
     bool armed = (i == resetConfirmIdx) &&
                  (int32_t)(millis() - resetConfirmUntil) < 0;
-    if (armed) spr.setTextColor(HOT, PANEL);
+    if (armed) spr.setTextColor(dcol(HOT), dcol(PANEL));
     spr.print(armed ? "really?" : resetItems[i]);
   }
   drawMenuHints(p, mx, mw, my + mh - 12);
@@ -352,12 +361,12 @@ void drawMenu() {
   const Palette& p = characterPalette();
   int mw = 118, mh = 16 + MENU_N * 14 + MENU_HINT_H;
   int mx = (W - mw) / 2, my = (H - mh) / 2;
-  spr.fillRoundRect(mx, my, mw, mh, 4, PANEL);
+  spr.fillRoundRect(mx, my, mw, mh, 4, dcol(PANEL));
   spr.drawRoundRect(mx, my, mw, mh, 4, p.textDim);
   spr.setTextSize(1);
   for (int i = 0; i < MENU_N; i++) {
     bool sel = (i == menuSel);
-    spr.setTextColor(sel ? p.text : p.textDim, PANEL);
+    spr.setTextColor(dcol(sel ? p.text : p.textDim), dcol(PANEL));
     spr.setCursor(mx + 6, my + 8 + i * 14);
     spr.print(sel ? "> " : "  ");
     spr.print(menuItems[i]);
@@ -535,25 +544,37 @@ bool checkShake() {
 // then a per-page section label below it. The fixed title is the cue that
 // B cycles pages here just like it does on PET.
 static void _infoHeader(const Palette& p, int& y, const char* section, uint8_t page) {
-  spr.setTextColor(p.text, p.bg);
-  spr.setCursor(getSafeX(y), y); spr.print("Info");
-  spr.setTextColor(p.textDim, p.bg);
-  spr.setCursor(W - getSafeX(y) - 28, y); spr.printf("%u/%u", page + 1, INFO_PAGES);
-  y += 12;
-  spr.setTextColor(p.body, p.bg);
-  spr.setCursor(getSafeX(y), y); spr.print(section);
-  y += 12;
+#ifdef ESP32_S3_LCD_316
+  const int X0 = BUDDY_ZONE_W;
+  const int INC = 22;
+#else
+  const int X0 = 0;
+  const int INC = 12;
+#endif
+  spr.setTextColor(dcol(p.text), dcol(p.bg));
+  spr.setCursor(X0 + getSafeX(y), y); spr.print("Info");
+  spr.setTextColor(dcol(p.textDim), dcol(p.bg));
+#ifdef ESP32_S3_LCD_316
+  spr.setCursor(W - 48, y);
+#else
+  spr.setCursor(W - getSafeX(y) - 28, y);
+#endif
+  spr.printf("%u/%u", page + 1, INFO_PAGES);
+  y += INC;
+  spr.setTextColor(dcol(p.body), dcol(p.bg));
+  spr.setCursor(X0 + getSafeX(y), y); spr.print(section);
+  y += INC;
 }
 
 void drawPasskey() {
   const Palette& p = characterPalette();
-  spr.fillSprite(p.bg);
+  spr.fillSprite(dcol(p.bg));
   spr.setTextSize(1);
-  spr.setTextColor(p.textDim, p.bg);
+  spr.setTextColor(dcol(p.textDim), dcol(p.bg));
   spr.setCursor((W - 17 * 6) / 2, H * 13 / 48);  spr.print("BLUETOOTH PAIRING");
   spr.setCursor((W - 17 * 6) / 2, H * 31 / 48);   spr.print("enter on desktop:");
   spr.setTextSize(3);
-  spr.setTextColor(p.text, p.bg);
+  spr.setTextColor(dcol(p.text), dcol(p.bg));
   char b[8]; snprintf(b, sizeof(b), "%06lu", (unsigned long)blePasskey());
   spr.setCursor((W - 18 * 6) / 2, H * 5 / 12);
   spr.print(b);
@@ -561,59 +582,63 @@ void drawPasskey() {
 
 void drawInfo() {
   const Palette& p = characterPalette();
+#ifdef ESP32_S3_LCD_316
+  const int X0 = BUDDY_ZONE_W;
+  const int S = 2, LH = 18;
+  spr.fillRect(X0, 0, W - X0, H, dcol(p.bg));
+  int y = 4;
+#else
+  const int X0 = 0;
+  const int S = 1, LH = 8;
   int top = H * 7 / 24;
   spr.fillRect(0, top, W, H - top, p.bg);
-  spr.setTextSize(1);
   int y = top + 2;
+#endif
+  spr.setTextSize(S);
   auto ln = [&](const char* fmt, ...) {
-    char b[32]; va_list a; va_start(a, fmt); vsnprintf(b, sizeof(b), fmt, a); va_end(a);
-    spr.setCursor(getSafeX(y), y); spr.print(b); y += 8;
+    char b[48]; va_list a; va_start(a, fmt); vsnprintf(b, sizeof(b), fmt, a); va_end(a);
+    spr.setCursor(X0 + getSafeX(y), y); spr.print(b); y += LH;
   };
 
   if (infoPage == 0) {
     _infoHeader(p, y, "ABOUT", infoPage);
-    spr.setTextColor(p.textDim, p.bg);
+    spr.setTextColor(dcol(p.textDim), dcol(p.bg));
     ln("I watch your Claude");
     ln("desktop sessions.");
-    y += 6;
+    y += LH / 2;
     ln("I sleep when nothing's");
     ln("happening, wake when");
     ln("you start working,");
     ln("get impatient when");
     ln("approvals pile up.");
-    y += 6;
-    spr.setTextColor(p.text, p.bg);
-    ln("Press A on a prompt");
+    y += LH / 2;
+    spr.setTextColor(dcol(p.text), dcol(p.bg));
+    ln("Press BOOT on a prompt");
     ln("to approve from here.");
-    y += 6;
-    spr.setTextColor(p.textDim, p.bg);
+    y += LH / 2;
+    spr.setTextColor(dcol(p.textDim), dcol(p.bg));
     ln("18 species. Settings");
     ln("> ascii pet to cycle.");
 
   } else if (infoPage == 1) {
     _infoHeader(p, y, "BUTTONS", infoPage);
-    spr.setTextColor(p.text, p.bg);    ln("A   front");
-    spr.setTextColor(p.textDim, p.bg); ln("    next screen");
-    ln("    approve prompt"); y += 4;
-    spr.setTextColor(p.text, p.bg);    ln("B   right side");
-    spr.setTextColor(p.textDim, p.bg); ln("    next page");
-    ln("    deny prompt"); y += 4;
-    spr.setTextColor(p.text, p.bg);    ln("hold A");
-    spr.setTextColor(p.textDim, p.bg); ln("    menu"); y += 4;
-    spr.setTextColor(p.text, p.bg);    ln("Power  left side");
-    spr.setTextColor(p.textDim, p.bg); ln("    tap = screen off");
-    ln("    hold 6s = off");
+    spr.setTextColor(dcol(p.text), dcol(p.bg));    ln("BOOT");
+    spr.setTextColor(dcol(p.textDim), dcol(p.bg)); ln("    next screen");
+    ln("    approve prompt"); y += LH / 2;
+    spr.setTextColor(dcol(p.text), dcol(p.bg));    ln("B   bottom edge");
+    spr.setTextColor(dcol(p.textDim), dcol(p.bg)); ln("    next page");
+    ln("    deny prompt");
 
   } else if (infoPage == 2) {
     _infoHeader(p, y, "CLAUDE", infoPage);
-    spr.setTextColor(p.textDim, p.bg);
+    spr.setTextColor(dcol(p.textDim), dcol(p.bg));
     ln("  sessions  %u", tama.sessionsTotal);
     ln("  running   %u", tama.sessionsRunning);
     ln("  waiting   %u", tama.sessionsWaiting);
-    y += 8;
-    spr.setTextColor(p.text, p.bg);
+    y += LH / 2;
+    spr.setTextColor(dcol(p.text), dcol(p.bg));
     ln("LINK");
-    spr.setTextColor(p.textDim, p.bg);
+    spr.setTextColor(dcol(p.textDim), dcol(p.bg));
     ln("  via       %s", dataScenarioName());
     ln("  ble       %s", !bleConnected() ? "-" : bleSecure() ? "encrypted" : "OPEN");
     uint32_t age = (millis() - tama.lastUpdated) / 1000;
@@ -626,31 +651,31 @@ void drawInfo() {
     int vBat_mV = (int)(M5.Axp.GetBatVoltage() * 1000);
     int iBat_mA = (int)M5.Axp.GetBatCurrent();
     int vBus_mV = (int)(M5.Axp.GetVBusVoltage() * 1000);
-    int pct = (vBat_mV - 3200) / 10;   // (v-3.2)/(4.2-3.2)*100 = (v-3.2)*100 = (mv-3200)/10
+    int pct = (vBat_mV - 3200) / 10;
     if (pct < 0) pct = 0; if (pct > 100) pct = 100;
     bool usb = vBus_mV > 4000;
     bool charging = usb && iBat_mA > 1;
     bool full = usb && vBat_mV > 4100 && iBat_mA < 10;
 
-    spr.setTextColor(p.text, p.bg);
+    spr.setTextColor(dcol(p.text), dcol(p.bg));
     spr.setTextSize(2);
-    spr.setCursor(getSafeX(y), y);
+    spr.setCursor(X0 + getSafeX(y), y);
     spr.printf("%d%%", pct);
-    spr.setTextSize(1);
-    spr.setTextColor(full ? GREEN : (charging ? HOT : p.textDim), p.bg);
-    spr.setCursor(getSafeX(y) + 56, y + 4);
+    spr.setTextSize(S);
+    spr.setTextColor(dcol(full ? GREEN : (charging ? HOT : p.textDim)), dcol(p.bg));
+    spr.setCursor(X0 + getSafeX(y) + 56, y + 4);
     spr.print(full ? "full" : (charging ? "charging" : (usb ? "usb" : "battery")));
-    y += 20;
+    y += 20 * S;
 
-    spr.setTextColor(p.textDim, p.bg);
+    spr.setTextColor(dcol(p.textDim), dcol(p.bg));
     ln("  battery  %d.%02dV", vBat_mV/1000, (vBat_mV%1000)/10);
     ln("  current  %+dmA", iBat_mA);
     if (usb) ln("  usb in   %d.%02dV", vBus_mV/1000, (vBus_mV%1000)/10);
-    y += 8;
+    y += LH / 2;
 
-    spr.setTextColor(p.text, p.bg);
+    spr.setTextColor(dcol(p.text), dcol(p.bg));
     ln("SYSTEM");
-    spr.setTextColor(p.textDim, p.bg);
+    spr.setTextColor(dcol(p.textDim), dcol(p.bg));
     if (ownerName()[0]) ln("  owner    %s", ownerName());
     uint32_t up = millis() / 1000;
     ln("  uptime   %luh %02lum", up / 3600, (up / 60) % 60);
@@ -663,30 +688,29 @@ void drawInfo() {
     _infoHeader(p, y, "BLUETOOTH", infoPage);
     bool linked = settings().bt && dataBtActive();
 
-    spr.setTextColor(linked ? GREEN : (settings().bt ? HOT : p.textDim), p.bg);
+    spr.setTextColor(dcol(linked ? GREEN : (settings().bt ? HOT : p.textDim)), dcol(p.bg));
     spr.setTextSize(2);
-    spr.setCursor(getSafeX(y), y);
+    spr.setCursor(X0 + getSafeX(y), y);
     spr.print(linked ? "linked" : (settings().bt ? "discover" : "off"));
-    spr.setTextSize(1);
-    y += 20;
+    spr.setTextSize(S);
+    y += 20 * S;
 
-    spr.setTextColor(p.textDim, p.bg);
-    spr.setTextColor(p.text, p.bg);
+    spr.setTextColor(dcol(p.text), dcol(p.bg));
     ln("  %s", btName);
-    spr.setTextColor(p.textDim, p.bg);
+    spr.setTextColor(dcol(p.textDim), dcol(p.bg));
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_BT);
     ln("  %02X:%02X:%02X:%02X:%02X:%02X",
        mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
-    y += 8;
+    y += LH / 2;
 
     if (linked) {
-      uint32_t age = (millis() - tama.lastUpdated) / 1000;
-      ln("  last msg  %lus", (unsigned long)age);
+      uint32_t age2 = (millis() - tama.lastUpdated) / 1000;
+      ln("  last msg  %lus", (unsigned long)age2);
     } else if (settings().bt) {
-      spr.setTextColor(p.text, p.bg);
+      spr.setTextColor(dcol(p.text), dcol(p.bg));
       ln("TO PAIR");
-      spr.setTextColor(p.textDim, p.bg);
+      spr.setTextColor(dcol(p.textDim), dcol(p.bg));
       ln(" Open Claude desktop");
       ln(" > Developer");
       ln(" > Hardware Buddy");
@@ -696,31 +720,31 @@ void drawInfo() {
 
   } else {
     _infoHeader(p, y, "CREDITS", infoPage);
-    spr.setTextColor(p.textDim, p.bg);
+    spr.setTextColor(dcol(p.textDim), dcol(p.bg));
     ln("made by");
     y += 4;
-    spr.setTextColor(p.text, p.bg);
+    spr.setTextColor(dcol(p.text), dcol(p.bg));
     ln("Felix Rieseberg");
     y += 12;
-    spr.setTextColor(p.textDim, p.bg);
+    spr.setTextColor(dcol(p.textDim), dcol(p.bg));
     ln("source");
     y += 4;
-    spr.setTextColor(p.text, p.bg);
+    spr.setTextColor(dcol(p.text), dcol(p.bg));
     ln("github.com/anthropics");
     ln("/claude-desktop-buddy");
     y += 12;
-    spr.setTextColor(p.textDim, p.bg);
+    spr.setTextColor(dcol(p.textDim), dcol(p.bg));
     ln("hardware");
     y += 4;
-    ln("M5StickC Plus");
-    ln("ESP32 + AXP192");
+    ln("M5StickC Plus / S3");
   }
 }
 
 
 // Greedy word-wrap into fixed-width rows. Continuation rows get a leading
 // space. Returns number of rows written.
-static uint8_t wrapInto(const char* in, char out[][24], uint8_t maxRows, uint8_t width) {
+template<uint8_t COLS>
+static uint8_t wrapInto(const char* in, char out[][COLS], uint8_t maxRows, uint8_t width) {
   uint8_t row = 0, col = 0;
   const char* p = in;
   while (*p && row < maxRows) {
@@ -817,79 +841,101 @@ static void tinyHeart(int x, int y, bool filled, uint16_t col) {
 }
 
 static void drawPetStats(const Palette& p) {
+#ifdef ESP32_S3_LCD_316
+  const int X0 = BUDDY_ZONE_W;
+  const int S = 2;
+  spr.fillRect(X0, 0, W - X0, H, dcol(p.bg));
+  int y = 30;
+#else
+  const int X0 = 0;
+  const int S = 1;
   int top = H * 7 / 24;
   spr.fillRect(0, top, W, H - top, p.bg);
-  spr.setTextSize(1);
   int y = top + 16;
+#endif
+  spr.setTextSize(S);
 
-  spr.setTextColor(p.textDim, p.bg);
-  spr.setCursor(getSafeX(y), y - 2); spr.print("mood");
+  spr.setTextColor(dcol(p.textDim), dcol(p.bg));
+  spr.setCursor(X0 + getSafeX(y), y - 2); spr.print("mood");
   uint8_t mood = statsMoodTier();
   uint16_t moodCol = (mood >= 3) ? RED : (mood >= 2) ? HOT : p.textDim;
-  int heartStartX = getSafeX(y) + 48;
-  for (int i = 0; i < 4; i++) tinyHeart(heartStartX + i * 16, y + 2, i < mood, moodCol);
+  int heartStartX = X0 + getSafeX(y) + 48 * S;
+  for (int i = 0; i < 4; i++) tinyHeart(heartStartX + i * 16 * S, y + 2, i < mood, moodCol);
 
-  y += 20;
-  spr.setCursor(getSafeX(y), y - 2); spr.print("fed");
+  y += 20 * S;
+  spr.setTextColor(dcol(p.textDim), dcol(p.bg));
+  spr.setCursor(X0 + getSafeX(y), y - 2); spr.print("fed");
   uint8_t fed = statsFedProgress();
-  int circleStartX = getSafeX(y) + 32;
+  int circleStartX = X0 + getSafeX(y) + 32 * S;
   for (int i = 0; i < 10; i++) {
-    int px = circleStartX + i * 9;
-    if (i < fed) spr.fillCircle(px, y + 1, 2, p.body);
-    else spr.drawCircle(px, y + 1, 2, p.textDim);
+    int px = circleStartX + i * 9 * S;
+    if (i < fed) spr.fillCircle(px, y + S, 2 * S, dcol(p.body));
+    else         spr.drawCircle(px, y + S, 2 * S, p.textDim);
   }
 
-  y += 20;
-  spr.setCursor(getSafeX(y), y - 2); spr.print("energy");
+  y += 20 * S;
+  spr.setTextColor(dcol(p.textDim), dcol(p.bg));
+  spr.setCursor(X0 + getSafeX(y), y - 2); spr.print("energy");
   uint8_t en = statsEnergyTier();
   uint16_t enCol = (en >= 4) ? 0x07FF : (en >= 2) ? 0xFFE0 : HOT;
-  int rectStartX = getSafeX(y) + 48;
+  int rectStartX = X0 + getSafeX(y) + 48 * S;
   for (int i = 0; i < 5; i++) {
-    int px = rectStartX + i * 13;
-    if (i < en) spr.fillRect(px, y - 2, 9, 6, enCol);
-    else spr.drawRect(px, y - 2, 9, 6, p.textDim);
+    int px = rectStartX + i * 13 * S;
+    if (i < en) spr.fillRect(px, y - 2, 9 * S, 6 * S, dcol(enCol));
+    else        spr.drawRect(px, y - 2, 9 * S, 6 * S, p.textDim);
   }
 
-  y += 24;
-  spr.fillRoundRect(getSafeX(y), y - 2, 42, 14, 3, p.body);
-  spr.setTextColor(p.bg, p.body);
-  spr.setCursor(getSafeX(y) + 5, y + 1); spr.printf("Lv %u", stats().level);
+  y += 24 * S;
+  spr.fillRoundRect(X0 + getSafeX(y), y - 2, 42 * S, 14 * S, 3 * S, dcol(p.body));
+  spr.setTextColor(dcol(p.bg), dcol(p.body));
+  spr.setCursor(X0 + getSafeX(y) + 5 * S, y + S); spr.printf("Lv %u", stats().level);
 
-  y += 20;
-  spr.setTextColor(p.textDim, p.bg);
-  spr.setCursor(getSafeX(y), y);
+  y += 20 * S;
+  spr.setTextColor(dcol(p.textDim), dcol(p.bg));
+  spr.setCursor(X0 + getSafeX(y), y);
   spr.printf("approved %u", stats().approvals);
-  
-  y += 10;
-  spr.setCursor(getSafeX(y), y);
+
+  y += 10 * S;
+  spr.setCursor(X0 + getSafeX(y), y);
   spr.printf("denied   %u", stats().denials);
-  
-  y += 10;
+
+  y += 10 * S;
   uint32_t nap = stats().napSeconds;
-  spr.setCursor(getSafeX(y), y);
+  spr.setCursor(X0 + getSafeX(y), y);
   spr.printf("napped   %luh%02lum", nap/3600, (nap/60)%60);
-  
+
   auto tokFmt = [&](const char* label, uint32_t v, int yPx) {
-    spr.setCursor(getSafeX(yPx), yPx);
+    spr.setCursor(X0 + getSafeX(yPx), yPx);
     if (v >= 1000000)   spr.printf("%s%lu.%luM", label, v/1000000, (v/100000)%10);
     else if (v >= 1000) spr.printf("%s%lu.%luK", label, v/1000, (v/100)%10);
     else                spr.printf("%s%lu", label, v);
   };
-  tokFmt("tokens   ", stats().tokens, y + 10);
-  tokFmt("today    ", tama.tokensToday, y + 20);
+  tokFmt("tokens   ", stats().tokens, y + 10 * S);
+  tokFmt("today    ", tama.tokensToday, y + 20 * S);
 }
 
 static void drawPetHowTo(const Palette& p) {
+#ifdef ESP32_S3_LCD_316
+  const int X0 = BUDDY_ZONE_W;
+  const int LH = 16, GAP = 6;
+  spr.fillRect(X0, 0, W - X0, H, dcol(p.bg));
+  spr.setTextSize(2);
+  int y = 2;
+#else
+  const int LH = 9, GAP = 4;
+  const int X0 = 0;
   int top = H * 7 / 24;
   spr.fillRect(0, top, W, H - top, p.bg);
   spr.setTextSize(1);
   int y = top + 2;
+#endif
   auto ln = [&](uint16_t c, const char* s) {
-    spr.setTextColor(c, p.bg); spr.setCursor(getSafeX(y), y); spr.print(s); y += 9;
+    spr.setTextColor(dcol(c), dcol(p.bg));
+    spr.setCursor(X0 + getSafeX(y), y); spr.print(s); y += LH;
   };
-  auto gap = [&]() { y += 4; };
+  auto gap = [&]() { y += GAP; };
 
-  y += 12;  // room for the PET header drawn by drawPet()
+  y += 22;  // room for the PET header drawn by drawPet()
 
   ln(p.body,    "MOOD");
   ln(p.textDim, " approve fast = up");
@@ -906,28 +952,39 @@ static void drawPetHowTo(const Palette& p) {
   ln(p.textDim, "idle 30s = off");
   ln(p.textDim, "any button = wake"); gap();
 
-  ln(p.textDim, "A: screens  B: page");
-  ln(p.textDim, "hold A: menu");
+  ln(p.textDim, "BOOT: screens / approve");
+  ln(p.textDim, "B: page / deny");
 }
 
 void drawPet() {
   const Palette& p = characterPalette();
-  int y = H * 7 / 24;
 
   if (petPage == 0) drawPetStats(p);
   else drawPetHowTo(p);
 
   // Header on top of whichever page drew — title left, counter right
+#ifdef ESP32_S3_LCD_316
+  const int X0 = BUDDY_ZONE_W;
+  int y = 2;
+  spr.setTextSize(2);
+#else
+  const int X0 = 0;
+  int y = H * 7 / 24;
   spr.setTextSize(1);
-  spr.setTextColor(p.text, p.bg);
-  spr.setCursor(getSafeX(y + 2), y + 2);
+#endif
+  spr.setTextColor(dcol(p.text), dcol(p.bg));
+  spr.setCursor(X0 + getSafeX(y + 2), y + 2);
   if (ownerName()[0]) {
     spr.printf("%s's %s", ownerName(), petName());
   } else {
     spr.print(petName());
   }
-  spr.setTextColor(p.textDim, p.bg);
+  spr.setTextColor(dcol(p.textDim), dcol(p.bg));
+#ifdef ESP32_S3_LCD_316
+  spr.setCursor(W - 48, y + 2);
+#else
   spr.setCursor(W - getSafeX(y + 2) - 28, y + 2);
+#endif
   spr.printf("%u/%u", petPage + 1, PET_PAGES);
 }
 
@@ -951,7 +1008,7 @@ void drawHUD() {
 
   // Wrap all transcript lines into a flat display buffer. Track which
   // transcript index each display row came from, so we can dim older ones.
-  static char disp[32][24];
+  static char disp[32][52];
   static uint8_t srcOf[32];
   uint8_t nDisp = 0;
   for (uint8_t i = 0; i < tama.nLines && nDisp < 32; i++) {
@@ -983,129 +1040,115 @@ void drawHUD() {
 }
 
 #ifdef ESP32_S3_LCD_316
-// ── S3 approval card (267 px tall, y = H-267 .. H) ──────────────────────────
+// ── S3 approval card — right zone (x=BUDDY_ZONE_W..W, y=0..H) ───────────────
 static void drawApprovalS3() {
   const Palette& p = characterPalette();
-  const int AREA = H * 13 / 40;
-  const int TOP  = H - AREA;
-  spr.fillRect(0, TOP, W, AREA, p.bg);
-  spr.drawFastHLine(0, TOP, W, p.textDim);
-  spr.setTextSize(1);
+  const int XO = BUDDY_ZONE_W;   // 320
+  const int ZW = W - XO;         // 500
 
-  int y = TOP + 6;
+  spr.fillRect(XO, 0, ZW, H, p.bg);
+  spr.drawFastVLine(XO, 0, H, p.textDim);   // separator (pre-swaps internally)
+
+  spr.setTextSize(2);
+  int y = 6;
   uint32_t waited = (millis() - promptArrivedMs) / 1000;
-  spr.setTextColor(waited >= 10 ? HOT : p.textDim, p.bg);
-  spr.setCursor(8, y);
+  spr.setTextColor(sw(waited >= 10 ? HOT : p.textDim), p.bg);
+  spr.setCursor(XO + 8, y);
   spr.printf("approve? %lus", (unsigned long)waited);
-  y += 14;
+  y += 22;
 
-  // Tool name
-  int toolLen = strlen(tama.promptTool);
-  spr.setTextSize(toolLen <= 12 ? 2 : 1);
-  spr.setTextColor(p.text, p.bg);
-  spr.setCursor(8, y);
+  spr.setTextColor(sw(p.text), p.bg);
+  spr.setCursor(XO + 8, y);
   spr.print(tama.promptTool);
-  spr.setTextSize(1);
-  y += toolLen <= 12 ? 22 : 12;
+  y += 22;
 
-  // Hint — up to 4 wrapped lines
-  spr.setTextColor(p.textDim, p.bg);
-  static char hrows[4][24];
-  uint8_t hn = wrapInto(tama.promptHint, hrows, 4, 21);
+  // Hint — full right-zone width at textSize 2
+  spr.setTextColor(sw(p.textDim), p.bg);
+  static char hrows[4][42];
+  uint8_t hn = wrapInto(tama.promptHint, hrows, 4, (uint8_t)((ZW - 16) / 12));
   for (uint8_t i = 0; i < hn; i++) {
-    spr.setCursor(8, y); spr.print(hrows[i]); y += 11;
+    spr.setCursor(XO + 8, y); spr.print(hrows[i]); y += 22;
   }
 
   if (responseSent) {
-    spr.setTextColor(p.textDim, p.bg);
-    spr.setCursor(8, y + 4); spr.print("sent...");
+    spr.setTextColor(sw(p.textDim), p.bg);
+    spr.setCursor(XO + 8, y + 4); spr.print("sent...");
   }
 
-  // Approve / deny affordances at bottom
   spr.setTextSize(2);
-  spr.setTextColor(GREEN, p.bg);
-  spr.setCursor(8, H - 26);
-  spr.print("A:approve");
-  spr.setTextColor(HOT, p.bg);
-  spr.setCursor(W - 7 * 12 - 8, H - 26);
+  spr.setTextColor(sw(GREEN), p.bg);
+  spr.setCursor(XO + 8, H - 26);
+  spr.print("BOOT:approve");
+  spr.setTextColor(sw(HOT), p.bg);
+  spr.setCursor(W - 6 * 12 - 8, H - 26);
   spr.print("B:deny");
   spr.setTextSize(1);
 }
 
-// ── S3 full-height status + transcript (y = 165 .. H) ───────────────────────
-// Color note: fillRect stores raw value; esp_lcd draw_bitmap byte-swaps each pixel.
-// drawFastHLine/drawPixel pre-swaps internally, so display un-swaps → correct color.
-// For fillRect/setTextColor paths, pre-swap so the double-swap yields the right color.
-static inline uint16_t sw(uint16_t c) { return (c >> 8) | (c << 8); }
-
+// ── S3 HUD — right zone (x=BUDDY_ZONE_W..W) ─────────────────────────────────
 static void drawHudS3() {
   if (tama.promptId[0]) { drawApprovalS3(); return; }
 
-  const Palette& p = characterPalette();
-  const int TOP = 164;
+  const int XO  = BUDDY_ZONE_W;  // 320
+  const int ZW  = W - XO;        // 500
 
-  const uint16_t SBKG  = 0x0000;       // black bg (symmetric under swap)
-  const uint16_t S_GRN = sw(GREEN);    // 0xE007 → shows green on panel
-  const uint16_t S_ORG = sw(ORANGE);   // 0x20FD → shows orange on panel
-  const uint16_t S_WHT = WHITE;        // 0xFFFF (symmetric)
-  const uint16_t S_HOT = sw(HOT);      // 0x20FA → shows red-orange on panel
-  const uint16_t S_LGR = sw(LIGHTGREY);// 0x18C6 → shows light grey on panel
-  const uint16_t S_DIM = sw(p.textDim);// → shows dim grey on panel
-
-  spr.fillRect(0, TOP, W, H - TOP, SBKG);
-  // drawFastHLine uses drawPixel (pre-swaps), panel un-swaps → correct color, no pre-swap needed
-  spr.drawFastHLine(0, TOP, W, WHITE);
+  spr.fillRect(XO, 0, ZW, H, 0x0000);
+  spr.drawFastVLine(XO, 0, H, WHITE);   // vertical separator (pre-swaps)
 
   spr.setTextSize(2);
-  int y = TOP + 8;
-
+  int y = 6;
   bool linked = bleConnected();
-  spr.setTextColor(linked ? S_GRN : S_ORG, SBKG);
-  spr.setCursor(8, y);
+  spr.setTextColor(sw(linked ? GREEN : ORANGE), 0x0000);
+  spr.setCursor(XO + 8, y);
   spr.print(linked ? "connected" : "no claude");
-  y += 24;
+  y += 22;
 
   if (!linked) return;
 
-  spr.setTextColor(S_WHT, SBKG);
-  spr.setCursor(8, y);
+  spr.setTextSize(2);
+  spr.setTextColor(sw(WHITE), 0x0000);
+  spr.setCursor(XO + 8, y);
   spr.printf("%u run", tama.sessionsRunning);
   if (tama.sessionsWaiting > 0) {
-    spr.setTextColor(S_HOT, SBKG);
+    spr.setTextColor(sw(HOT), 0x0000);
     spr.printf("  %u wait", tama.sessionsWaiting);
   }
-  y += 24;
+  y += 22;
 
   uint32_t tok = tama.tokensToday;
-  spr.setTextColor(S_LGR, SBKG);
-  spr.setCursor(8, y);
+  spr.setTextColor(sw(LIGHTGREY), 0x0000);
+  spr.setCursor(XO + 8, y);
   if      (tok >= 1000000) spr.printf("%.1fM tok", tok / 1000000.0f);
   else if (tok >= 1000)    spr.printf("%.1fK tok", tok / 1000.0f);
   else                     spr.printf("%lu tok",   (unsigned long)tok);
-  y += 24;
+  y += 22;
 
-  spr.setTextSize(1);
-  y += 4;
-  spr.drawFastHLine(8, y, W - 16, LIGHTGREY);  // drawPixel path: normal color
+  spr.drawFastHLine(XO + 8, y, ZW - 16, LIGHTGREY);  // pre-swaps
   y += 10;
 
   if (tama.lineGen != lastLineGen) { msgScroll = 0; lastLineGen = tama.lineGen; wake(); }
 
+  const Palette& p = characterPalette();
+
   if (tama.nLines == 0) {
-    spr.setTextColor(S_LGR, SBKG);
-    spr.setCursor(8, y); spr.print(tama.msg);
+    spr.setTextColor(sw(LIGHTGREY), 0x0000);
+    spr.setCursor(XO + 8, y); spr.print(tama.msg);
     return;
   }
 
-  const int LH = 11, WIDTH = 21;
+  const int LH    = 20;
+  const int WIDTH = (ZW - 16) / 12;  // chars per line at textSize 2 (~40)
+  const int MAXR  = 64;
   int SHOW = (H - y - 4) / LH;
-  if (SHOW > 32) SHOW = 32;
+  if (SHOW > MAXR) SHOW = MAXR;
 
-  static char disp[32][24];
-  static uint8_t srcOf[32];
+  spr.setTextSize(2);
+  static char disp[64][42];
+  static uint8_t srcOf[64];
   uint8_t nDisp = 0;
-  for (uint8_t i = 0; i < tama.nLines && nDisp < 32; i++) {
-    uint8_t got = wrapInto(tama.lines[i], &disp[nDisp], 32 - nDisp, WIDTH);
+  for (uint8_t i = 0; i < tama.nLines && nDisp < MAXR; i++) {
+    uint8_t got = wrapInto(tama.lines[i], disp + nDisp,
+                           (uint8_t)(MAXR - nDisp), (uint8_t)WIDTH);
     for (uint8_t j = 0; j < got; j++) srcOf[nDisp + j] = i;
     nDisp += got;
   }
@@ -1117,14 +1160,13 @@ static void drawHudS3() {
   for (int i = 0; start + i < end; i++) {
     uint8_t row = start + i;
     bool fresh = (srcOf[row] == newest) && (msgScroll == 0);
-    spr.setTextColor(fresh ? S_WHT : S_DIM, SBKG);
-    int yRow = y + i * LH;
-    spr.setCursor(8, yRow); spr.print(disp[row]);
+    spr.setTextColor(fresh ? sw(WHITE) : sw(p.textDim), 0x0000);
+    spr.setCursor(XO + 8, y + i * LH);
+    spr.print(disp[row]);
   }
   if (msgScroll > 0) {
-    spr.setTextColor(S_LGR, SBKG);
-    int yScroll = y + (SHOW - 1) * LH;
-    spr.setCursor(W - 18, yScroll);
+    spr.setTextColor(sw(LIGHTGREY), 0x0000);
+    spr.setCursor(W - 18, y + (SHOW - 1) * LH);
     spr.printf("-%u", msgScroll);
   }
 }
@@ -1162,10 +1204,9 @@ void setup() {
 #endif
   characterInit(nullptr);  // scan /characters/ for whatever is installed
   gifAvailable = characterLoaded();
-  // species NVS: 0..N-1 = ASCII species, 0xFF = use GIF (also the default,
-  // so a fresh install lands on the GIF). With no GIF installed, 0xFF falls
-  // through to buddyInit()'s clamped default.
-  buddyMode = !(gifAvailable && speciesIdxLoad() == SPECIES_GIF);
+  // Always prefer the installed GIF character; user can cycle to ASCII via
+  // nextPet(). NVS is used only for which ASCII species was last chosen.
+  buddyMode = !gifAvailable;
   applyDisplayMode();
 
   Serial.printf("buddy: %s\n", buddyMode ? "ASCII mode" : "GIF character loaded");
@@ -1305,16 +1346,22 @@ void loop() {
   }
 
 #ifdef ESP32_S3_LCD_316
-  // BOOT button (GPIO0): secondary approve — same action as BtnA short-press when a prompt is active
-  if (M5.BtnBoot.wasReleased() && inPrompt) {
-    char cmd[96];
-    snprintf(cmd, sizeof(cmd), "{\"cmd\":\"permission\",\"id\":\"%s\",\"decision\":\"once\"}", tama.promptId);
-    sendCmd(cmd);
-    responseSent = true;
-    uint32_t tookS = (millis() - promptArrivedMs) / 1000;
-    statsOnApproval(tookS);
-    beep(2400, 60);
-    if (tookS < 5) triggerOneShot(P_HEART, 2000);
+  // BOOT button (GPIO0): approve when prompt active, otherwise cycle display mode
+  if (M5.BtnBoot.wasReleased()) {
+    if (inPrompt) {
+      char cmd[96];
+      snprintf(cmd, sizeof(cmd), "{\"cmd\":\"permission\",\"id\":\"%s\",\"decision\":\"once\"}", tama.promptId);
+      sendCmd(cmd);
+      responseSent = true;
+      uint32_t tookS = (millis() - promptArrivedMs) / 1000;
+      statsOnApproval(tookS);
+      beep(2400, 60);
+      if (tookS < 5) triggerOneShot(P_HEART, 2000);
+    } else if (!menuOpen && !settingsOpen && !resetOpen) {
+      beep(1800, 30);
+      displayMode = (displayMode + 1) % DISP_COUNT;
+      applyDisplayMode();
+    }
   }
 #endif
 
@@ -1460,6 +1507,10 @@ void loop() {
     else if (settingsOpen) drawSettings();
     else if (menuOpen) drawMenu();
 #ifdef ESP32_S3_LCD_316
+    // Separator drawn last every frame so no screen's fillRect can erase it.
+    // Two pixels wide to reduce tearing visibility from software rotation.
+    spr.drawFastVLine(BUDDY_ZONE_W,     0, H, WHITE);
+    spr.drawFastVLine(BUDDY_ZONE_W + 1, 0, H, WHITE);
     panelBlit(spr.getPointer(), W, H);
 #else
     spr.pushSprite(0, 0);

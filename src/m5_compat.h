@@ -195,7 +195,11 @@ public:
     return GetVBusVoltage() > 4.0f ? 100.0f : -50.0f;
   }
   float GetVBusVoltage() {
+#ifdef ESP32_S3_LCD_316
+    return 0.0f;  // no USB-voltage pin; prevents clock-mode from auto-triggering
+#else
     return 5.0f;
+#endif
   }
   int GetTempInAXP192() {
     return 28;

@@ -84,13 +84,22 @@ static const st7701_lcd_init_cmd_t lcd_init_cmds[] = {
   {0xE8, (uint8_t []){0x00,0x00}, 2, 0},
   {0xFF, (uint8_t []){0x77,0x01,0x00,0x00,0x00}, 5, 0},
   {0x3A, (uint8_t []){0x55}, 1, 0},   // RGB565
-  {0x36, (uint8_t []){0x00}, 1, 0},   // MADCTL normal
+  {0x36, (uint8_t []){0x60}, 1, 0},   // MADCTL MX+MV = 90° CW landscape
   {0x35, (uint8_t []){0x00}, 1, 0},
   {0x29, (uint8_t []){0x00}, 0, 20},  // display on
   {0xC3, (uint8_t []){0x80}, 1, 0},
 };
 
 static esp_lcd_panel_handle_t s_panel = NULL;
+// Set by the vsync ISR; cleared at the start of each panelBlit wait.
+static volatile bool s_vsync_flag = false;
+
+static IRAM_ATTR bool panel_vsync_cb(esp_lcd_panel_handle_t,
+                                      const esp_lcd_rgb_panel_event_data_t*,
+                                      void*) {
+  s_vsync_flag = true;
+  return false;
+}
 
 // ── Backlight (raw ESP-IDF LEDC, active-LOW: duty 0 = full bright, 255 = off)
 // Always reinitialises timer+channel so BLE init can't clobber the config.
@@ -132,7 +141,9 @@ void panelInit() {
   esp_lcd_panel_io_handle_t io_handle = NULL;
   ESP_ERROR_CHECK(esp_lcd_new_panel_io_3wire_spi(&io_config, &io_handle));
 
-  // RGB panel config — pin order: B0..B4, G0..G5, R0..R4 (BGR wiring; MADCTL=0x00)
+  // RGB panel config — landscape 820×320 via MADCTL MX+MV (0x60).
+  // h_res=820/v_res=320: panel gate driver (820 lines) becomes landscape columns;
+  // source driver (320 outputs) becomes landscape rows. No software rotation needed.
   esp_lcd_rgb_panel_config_t rgb_config = {};
   rgb_config.clk_src              = LCD_CLK_SRC_DEFAULT;
   rgb_config.psram_trans_align    = 64;
@@ -191,15 +202,42 @@ void panelInit() {
   ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
   ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
 
+  esp_lcd_rgb_panel_event_callbacks_t cbs = {};
+  cbs.on_vsync = panel_vsync_cb;
+  ESP_ERROR_CHECK(esp_lcd_rgb_panel_register_event_callbacks(s_panel, &cbs, nullptr));
+
+  // 3-wire SPI is one-shot; release GP0 so a crash/watchdog reset doesn't
+  // leave it OUTPUT-LOW and force bootloader mode. BtnBoot.begin() re-takes it.
+  gpio_reset_pin((gpio_num_t)PIN_SPI_CS);
+
   // Backlight on at 78% duty (200/255)
   panelBacklight(200);
 }
 
 // ── Blit sprite buffer to panel ──────────────────────────────────────────────
+// Waits for vsync, then immediately writes the 90° CW rotation into fb0.
+// Writing starts the instant the panel scan starts row 0, and our write rate
+// (63k rows/s) > scan rate (43k rows/s), so we stay ahead of the scan on
+// every row — no tearing. Both frame buffers are kept in sync so the panel
+// never displays a stale buffer.
 void panelBlit(const void* buf, int w, int h) {
-  if (s_panel && buf) {
-    esp_lcd_panel_draw_bitmap(s_panel, 0, 0, w, h, buf);
+  if (!s_panel || !buf) return;
+  // Wait for vsync (max 2 frame periods to avoid hanging if ISR is missed).
+  s_vsync_flag = false;
+  uint32_t deadline = millis() + 40;
+  while (!s_vsync_flag && (int32_t)(millis() - deadline) < 0) taskYIELD();
+
+  void *fb0 = nullptr, *fb1 = nullptr;
+  esp_lcd_rgb_panel_get_frame_buffer(s_panel, 2, &fb0, &fb1);
+  if (!fb0) return;
+  const uint16_t *src = (const uint16_t*)buf;
+  uint16_t       *dst = (uint16_t*)fb0;
+  for (int pr = 0; pr < w; pr++) {
+    uint16_t *drow = dst + pr * 320;
+    for (int pc = 0; pc < h; pc++)
+      drow[pc] = src[(h - 1 - pc) * w + pr];
   }
+  if (fb1) memcpy(fb1, fb0, (size_t)w * h * 2);
 }
 
 // ── Solid-color fill (diagnostic) ───────────────────────────────────────────
@@ -209,11 +247,11 @@ void panelFill(uint16_t color) {
   esp_lcd_rgb_panel_get_frame_buffer(s_panel, 2, &fb1, &fb2);
   if (fb1) {
     uint16_t* p = (uint16_t*)fb1;
-    for (int i = 0; i < 320 * 820; i++) p[i] = color;
+    for (int i = 0; i < 820 * 320; i++) p[i] = color;
   }
   if (fb2) {
     uint16_t* p = (uint16_t*)fb2;
-    for (int i = 0; i < 320 * 820; i++) p[i] = color;
+    for (int i = 0; i < 820 * 320; i++) p[i] = color;
   }
 }
 
