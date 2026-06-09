@@ -6,3 +6,5 @@ managed_components/
 waveshare_demo/
 waveshare_demo.zip
 ESP32-S3-LCD-3.16-Demo/
+.agent_state.md
+
