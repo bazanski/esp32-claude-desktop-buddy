@@ -1,4 +1,5 @@
 #include "character.h"
+#include "buddy_common.h"
 #include <M5StickCPlus.h>
 #include <LittleFS.h>
 #include <AnimatedGIF.h>
@@ -37,10 +38,11 @@ static uint8_t curState = 0xFF;
 static AnimatedGIF gif;
 static File        gifFile;
 static int         gifX = 0, gifY = 0, gifW = 0, gifH = 0;
-// Peek mode pins the GIF bottom to the info-panel top (y=70) so the pet
+// Peek mode pins the GIF bottom to the info-panel top so the pet
 // sits on the panel edge regardless of canvas height. Home mode centers
-// in the upper 140px. No padding assumed in the source art.
-static const int   PEEK_TOP = 70;
+// in the upper ~58% of the screen. No padding assumed in the source art.
+#define PEEK_TOP (int)(H * 7 / 24)
+#define HOME_ZONE (int)(H * 7 / 12)
 static bool        peekMode = false;
 // Draw target — defaults to the sprite; characterRenderTo() retargets to
 // M5.Lcd for the landscape clock (both inherit TFT_eSPI).
@@ -51,7 +53,7 @@ static void gifPlace() {
   int outW = peekMode ? gifW / 2 : gifW;
   int outH = peekMode ? gifH / 2 : gifH;
   gifX = (spr.width() - outW) / 2;
-  gifY = peekMode ? (PEEK_TOP - outH) / 2 : (140 - outH) / 2;
+  gifY = peekMode ? (PEEK_TOP - outH) / 2 : (HOME_ZONE - outH) / 2;
 }
 static uint32_t    nextFrameAt = 0;
 static uint32_t    animPauseUntil = 0;
@@ -138,7 +140,7 @@ static void gifDrawCb(GIFDRAW* d) {
 // --- Public -------------------------------------------------------------
 
 bool characterInit(const char* name) {
-  if (!LittleFS.begin(false)) {
+  if (!LittleFS.begin(true)) {
     // begin() fails if already mounted — that's fine on reload
     if (!LittleFS.open("/")) {
       Serial.println("[char] LittleFS mount failed");
@@ -342,7 +344,7 @@ void characterTick() {
 
     // Clear a band around the text, not the whole sprite — keeps overlays
     // like the approval panel and the HUD untouched.
-    int cy = peekMode ? 35 : 60;
+    int cy = peekMode ? (int)(H * 7 / 48) : (int)(H / 4);
     spr.fillRect(0, cy - 14, spr.width(), 28, pal.bg);
 
     const char* line = ts.frames[textFrame];

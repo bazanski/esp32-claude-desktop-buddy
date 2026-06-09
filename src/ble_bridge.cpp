@@ -41,7 +41,7 @@ static void rxPush(const uint8_t* p, size_t n) {
 
 class RxCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic* c) override {
-    std::string v = c->getValue();
+    std::string v = std::string(c->getValue().c_str());
     if (!v.empty()) rxPush((const uint8_t*)v.data(), v.size());
   }
 };
@@ -60,10 +60,17 @@ class ServerCallbacks : public BLEServerCallbacks {
     // Restart advertising so the next client can find us.
     BLEDevice::startAdvertising();
   }
+#if defined(CONFIG_NIMBLE_ENABLED)
+  void onMtuChanged(BLEServer*, ble_gap_conn_desc* desc, uint16_t mtuVal) override {
+    mtu = mtuVal;
+    Serial.printf("[ble] mtu=%u\n", mtu);
+  }
+#else
   void onMtuChanged(BLEServer*, esp_ble_gatts_cb_param_t* param) override {
     mtu = param->mtu.mtu;
     Serial.printf("[ble] mtu=%u\n", mtu);
   }
+#endif
 };
 
 // LE Secure Connections, passkey-entry: we are DisplayOnly, the central
@@ -78,12 +85,21 @@ class SecCallbacks : public BLESecurityCallbacks {
     passkey = pk;
     Serial.printf("[ble] passkey %06lu\n", (unsigned long)pk);
   }
+#if defined(CONFIG_NIMBLE_ENABLED)
+  void onAuthenticationComplete(ble_gap_conn_desc* desc) override {
+    passkey = 0;
+    secure = desc->sec_state.encrypted;
+    Serial.printf("[ble] auth %s\n", secure ? "ok" : "FAIL");
+    if (!secure && server) server->disconnect(desc->conn_handle);
+  }
+#else
   void onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) override {
     passkey = 0;
     secure = cmpl.success;
     Serial.printf("[ble] auth %s\n", cmpl.success ? "ok" : "FAIL");
     if (!cmpl.success && server) server->disconnect(server->getConnId());
   }
+#endif
 };
 
 void bleInit(const char* deviceName) {
@@ -91,7 +107,6 @@ void bleInit(const char* deviceName) {
   // Request the biggest MTU we can get. macOS negotiates to 185 typically.
   BLEDevice::setMTU(517);
 
-  BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT_MITM);
   BLEDevice::setSecurityCallbacks(new SecCallbacks());
 
   server = BLEDevice::createServer();
@@ -99,20 +114,37 @@ void bleInit(const char* deviceName) {
 
   BLEService* svc = server->createService(NUS_SERVICE_UUID);
 
+#if defined(CONFIG_NIMBLE_ENABLED)
+  txChar = svc->createCharacteristic(
+    NUS_TX_UUID,
+    BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ_AUTHEN
+  );
+#else
   txChar = svc->createCharacteristic(
     NUS_TX_UUID,
     BLECharacteristic::PROPERTY_NOTIFY
   );
   txChar->setAccessPermissions(ESP_GATT_PERM_READ_ENCRYPTED);
+#endif
+
   BLE2902* cccd = new BLE2902();
+#if !defined(CONFIG_NIMBLE_ENABLED)
   cccd->setAccessPermissions(ESP_GATT_PERM_READ_ENCRYPTED | ESP_GATT_PERM_WRITE_ENCRYPTED);
+#endif
   txChar->addDescriptor(cccd);
 
+#if defined(CONFIG_NIMBLE_ENABLED)
+  rxChar = svc->createCharacteristic(
+    NUS_RX_UUID,
+    BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR | BLECharacteristic::PROPERTY_WRITE_AUTHEN
+  );
+#else
   rxChar = svc->createCharacteristic(
     NUS_RX_UUID,
     BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
   );
   rxChar->setAccessPermissions(ESP_GATT_PERM_WRITE_ENCRYPTED);
+#endif
   rxChar->setCallbacks(new RxCallbacks());
 
   svc->start();
@@ -138,6 +170,11 @@ bool bleSecure()    { return secure; }
 uint32_t blePasskey() { return passkey; }
 
 void bleClearBonds() {
+#if defined(CONFIG_NIMBLE_ENABLED)
+  ble_store_util_delete_all(BLE_STORE_OBJ_TYPE_OUR_SEC, nullptr);
+  ble_store_util_delete_all(BLE_STORE_OBJ_TYPE_PEER_SEC, nullptr);
+  Serial.println("[ble] cleared all bonds");
+#else
   int n = esp_ble_get_bond_device_num();
   if (n <= 0) return;
   esp_ble_bond_dev_t* list = (esp_ble_bond_dev_t*)malloc(n * sizeof(esp_ble_bond_dev_t));
@@ -146,6 +183,7 @@ void bleClearBonds() {
   for (int i = 0; i < n; i++) esp_ble_remove_bond_device(list[i].bd_addr);
   free(list);
   Serial.printf("[ble] cleared %d bond(s)\n", n);
+#endif
 }
 
 size_t bleAvailable() {
