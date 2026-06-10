@@ -1347,7 +1347,7 @@ void loop() {
 
 #ifdef ESP32_S3_LCD_316
   // BOOT button (GPIO0): approve when prompt active, otherwise cycle display mode
-  if (M5.BtnBoot.wasReleased()) {
+  if (M5.BtnBoot.wasPressed()) {
     if (inPrompt) {
       char cmd[96];
       snprintf(cmd, sizeof(cmd), "{\"cmd\":\"permission\",\"id\":\"%s\",\"decision\":\"once\"}", tama.promptId);

@@ -54,9 +54,9 @@ static void gifPlace() {
   int outW = peekMode ? gifW / 2 : gifW;
   int outH = peekMode ? gifH / 2 : gifH;
 #ifdef ESP32_S3_LCD_316
-  // Landscape: GIF always centered in the left 320×320 buddy zone
-  gifX = (BUDDY_ZONE_W - outW) / 2;
-  gifY = (H - outH) / 2;
+  // Landscape: GIF 2× upscaled, centered in left 320×320 buddy zone
+  gifX = (BUDDY_ZONE_W - gifW * 2) / 2;
+  gifY = (H - gifH * 2) / 2;
 #else
   gifX = (spr.width() - outW) / 2;
   gifY = peekMode ? (PEEK_TOP - outH) / 2 : (HOME_ZONE - outH) / 2;
@@ -142,6 +142,20 @@ static void gifDrawCb(GIFDRAW* d) {
     return;
   }
 
+#ifdef ESP32_S3_LCD_316
+  int y2 = gifY + srcY * 2;
+  if (y2 < 0 || y2 + 1 >= spr.height()) return;
+  int x0 = gifX + d->iX * 2;
+  int w  = d->iWidth;
+  if (x0 + w * 2 > BUDDY_ZONE_W) w = (BUDDY_ZONE_W - x0) / 2;
+  if (w <= 0) return;
+  for (int i = 0; i < w; i++) {
+    put(x0 + i*2,     y2,     src[i]);
+    put(x0 + i*2 + 1, y2,     src[i]);
+    put(x0 + i*2,     y2 + 1, src[i]);
+    put(x0 + i*2 + 1, y2 + 1, src[i]);
+  }
+#else
   int y = gifY + srcY;
   if (y < 0 || y >= spr.height()) return;
   int x0 = gifX + d->iX;
@@ -151,6 +165,7 @@ static void gifDrawCb(GIFDRAW* d) {
   if (x0 + w > spr.width()) w = spr.width() - x0;
   if (w <= 0) return;
   for (int i = 0; i < w; i++) put(x0 + i, y, src[i]);
+#endif
 }
 
 // --- Public -------------------------------------------------------------

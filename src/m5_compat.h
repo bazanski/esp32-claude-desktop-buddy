@@ -81,7 +81,7 @@ public:
   void begin() {
     pinMode(pin, INPUT_PULLUP);
     debouncer.attach(pin);
-    debouncer.interval(25);
+    debouncer.interval(5);
   }
 
   void update() {

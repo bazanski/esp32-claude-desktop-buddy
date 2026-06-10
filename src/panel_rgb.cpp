@@ -7,6 +7,7 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_st7701.h"
 #include "esp_lcd_panel_io_additions.h"
+#include "esp_cache.h"
 
 // ── Pin map (verified from schematic and demo user_config.h) ────────────────
 #define PIN_SPI_CS   0
@@ -148,7 +149,7 @@ void panelInit() {
   rgb_config.clk_src              = LCD_CLK_SRC_DEFAULT;
   rgb_config.psram_trans_align    = 64;
   rgb_config.bounce_buffer_size_px= 10 * 320;
-  rgb_config.num_fbs              = 2;
+  rgb_config.num_fbs              = 1;
   rgb_config.data_width           = 16;
   rgb_config.bits_per_pixel       = 16;
   rgb_config.de_gpio_num          = PIN_DE;
@@ -225,10 +226,10 @@ void panelBlit(const void* buf, int w, int h) {
   // Wait for vsync (max 2 frame periods to avoid hanging if ISR is missed).
   s_vsync_flag = false;
   uint32_t deadline = millis() + 40;
-  while (!s_vsync_flag && (int32_t)(millis() - deadline) < 0) taskYIELD();
+  while (!s_vsync_flag && (int32_t)(millis() - deadline) < 0) {}
 
-  void *fb0 = nullptr, *fb1 = nullptr;
-  esp_lcd_rgb_panel_get_frame_buffer(s_panel, 2, &fb0, &fb1);
+  void *fb0 = nullptr;
+  esp_lcd_rgb_panel_get_frame_buffer(s_panel, 1, &fb0);
   if (!fb0) return;
   const uint16_t *src = (const uint16_t*)buf;
   uint16_t       *dst = (uint16_t*)fb0;
@@ -237,7 +238,7 @@ void panelBlit(const void* buf, int w, int h) {
     for (int pc = 0; pc < h; pc++)
       drow[pc] = src[(h - 1 - pc) * w + pr];
   }
-  if (fb1) memcpy(fb1, fb0, (size_t)w * h * 2);
+  esp_cache_msync(fb0, (size_t)w * h * 2, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 }
 
 // ── Solid-color fill (diagnostic) ───────────────────────────────────────────
